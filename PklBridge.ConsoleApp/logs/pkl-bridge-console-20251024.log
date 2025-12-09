@@ -1,0 +1,86 @@
+2025-10-24 05:27:17.330 -03:00 [INF] PKL Bridge Console Worker iniciando...
+2025-10-24 05:27:17.363 -03:00 [INF] === Configuração PKL Bridge ===
+2025-10-24 05:27:17.367 -03:00 [INF] Named Pipe: pkl_serial
+2025-10-24 05:27:17.368 -03:00 [INF] COM Port Real: COM2
+2025-10-24 05:27:17.369 -03:00 [INF] Bridge Hardware: Desabilitado
+2025-10-24 05:27:17.370 -03:00 [INF] Log Todo Tráfego: Habilitado
+2025-10-24 05:27:17.371 -03:00 [INF] Config Serial: 19200, 8, None, One
+2025-10-24 05:27:17.374 -03:00 [INF] VIDA API: https://internal_laboratory.siqueira.vidaexame.com
+2025-10-24 05:27:17.376 -03:00 [INF] API Timeout: 30s
+2025-10-24 05:27:17.377 -03:00 [INF] Tentativas Retry: 3
+2025-10-24 05:27:17.378 -03:00 [INF] ===============================
+2025-10-24 05:27:17.379 -03:00 [INF] Testando conexão VIDA API (modo mock)...
+2025-10-24 05:27:17.407 -03:00 [INF] MOCK: API connection test successful
+2025-10-24 05:27:17.409 -03:00 [INF] ✅ Teste de conexão VIDA API bem-sucedido
+2025-10-24 05:27:17.410 -03:00 [INF] 🌐 Iniciando TCP Server na porta 8081 para HLAB...
+2025-10-24 05:27:17.412 -03:00 [INF] Iniciando TCP Server na porta 8081...
+2025-10-24 05:27:17.420 -03:00 [INF] ✅ TCP Server iniciado com sucesso na porta 8081
+2025-10-24 05:27:17.421 -03:00 [INF] ✅ TCP Server iniciado com sucesso!
+2025-10-24 05:27:17.422 -03:00 [INF] 🔍 Iniciando monitoramento paralelo da COM2 para detectar dados do HLAB...
+2025-10-24 05:27:17.544 -03:00 [INF] 🔍 Iniciando monitoramento da porta COM2...
+2025-10-24 05:27:17.590 -03:00 [INF] ✅ Monitoramento da porta COM2 iniciado com sucesso!
+2025-10-24 05:27:17.592 -03:00 [INF] 📡 Aguardando dados na COM2 (19200, 8, N, 1)...
+2025-10-24 05:27:17.594 -03:00 [INF] ✅ Monitoramento da COM2 iniciado - dados detectados serão alertados no console
+2025-10-24 05:27:17.596 -03:00 [INF] PKL Bridge Console Worker executando...
+2025-10-24 05:27:17.598 -03:00 [INF] Starting PKL Serial Bridge
+2025-10-24 05:27:17.600 -03:00 [INF] Starting Named Pipe Server with pipe name: pkl_serial
+2025-10-24 05:27:17.611 -03:00 [INF] Waiting for client connection on pipe: pkl_serial
+2025-10-24 05:27:17.613 -03:00 [INF] Named Pipe Server started successfully
+2025-10-24 05:27:17.616 -03:00 [INF] PKL Serial Bridge started successfully
+2025-10-24 05:27:17.628 -03:00 [INF] 💚 Health Check - Bridge: Rodando, Memória: 1MB, Uptime: 0.0min
+2025-10-24 05:27:17.636 -03:00 [INF] Application started. Press Ctrl+C to shut down.
+2025-10-24 05:27:17.638 -03:00 [INF] Hosting environment: Production
+2025-10-24 05:27:17.640 -03:00 [INF] Content root path: E:\Projetos\Andrey\Projetos\InterfacePKL\PklBridge.ConsoleApp
+2025-10-24 05:27:31.004 -03:00 [INF] Application is shutting down...
+2025-10-24 05:27:31.005 -03:00 [INF] PKL Bridge Console Worker parando...
+2025-10-24 05:27:31.008 -03:00 [INF] Stopping PKL Serial Bridge
+2025-10-24 05:27:31.009 -03:00 [INF] Stopping Named Pipe Server
+2025-10-24 05:27:31.019 -03:00 [INF] Named pipe server operation cancelled
+2025-10-24 05:27:31.021 -03:00 [INF] Named Pipe Server stopped
+2025-10-24 05:27:31.022 -03:00 [WRN] Serial port is not initialized
+2025-10-24 05:27:31.023 -03:00 [INF] PKL Serial Bridge stopped successfully
+2025-10-24 05:27:31.024 -03:00 [INF] PKL Bridge Console Worker cancelado
+2025-10-24 05:27:31.026 -03:00 [INF] PKL Bridge Console Worker parou
+2025-10-24 05:41:42.337 -03:00 [INF] PKL Bridge Console Worker iniciando...
+2025-10-24 05:41:42.370 -03:00 [INF] === Configuração PKL Bridge ===
+2025-10-24 05:41:42.372 -03:00 [INF] Named Pipe: pkl_serial
+2025-10-24 05:41:42.375 -03:00 [INF] COM Port Real: COM2
+2025-10-24 05:41:42.377 -03:00 [INF] Bridge Hardware: Desabilitado
+2025-10-24 05:41:42.379 -03:00 [INF] Log Todo Tráfego: Habilitado
+2025-10-24 05:41:42.382 -03:00 [INF] Config Serial: 19200, 8, None, One
+2025-10-24 05:41:42.385 -03:00 [INF] VIDA API: https://internal_laboratory.siqueira.vidaexame.com
+2025-10-24 05:41:42.385 -03:00 [INF] API Timeout: 30s
+2025-10-24 05:41:42.386 -03:00 [INF] Tentativas Retry: 3
+2025-10-24 05:41:42.387 -03:00 [INF] ===============================
+2025-10-24 05:41:42.389 -03:00 [INF] Testando conexão VIDA API (modo mock)...
+2025-10-24 05:41:42.418 -03:00 [INF] MOCK: API connection test successful
+2025-10-24 05:41:42.419 -03:00 [INF] ✅ Teste de conexão VIDA API bem-sucedido
+2025-10-24 05:41:42.421 -03:00 [INF] 🌐 Iniciando TCP Server na porta 8081 para HLAB...
+2025-10-24 05:41:42.423 -03:00 [INF] Iniciando TCP Server na porta 8081...
+2025-10-24 05:41:42.429 -03:00 [INF] ✅ TCP Server iniciado com sucesso na porta 8081
+2025-10-24 05:41:42.430 -03:00 [INF] ✅ TCP Server iniciado com sucesso!
+2025-10-24 05:41:42.432 -03:00 [INF] 🔍 Iniciando monitoramento paralelo da COM2 para detectar dados do HLAB...
+2025-10-24 05:41:42.562 -03:00 [INF] 🔍 Iniciando monitoramento da porta COM2...
+2025-10-24 05:41:42.568 -03:00 [INF] ✅ Monitoramento da porta COM2 iniciado com sucesso!
+2025-10-24 05:41:42.569 -03:00 [INF] 📡 Aguardando dados na COM2 (19200, 8, N, 1)...
+2025-10-24 05:41:42.570 -03:00 [INF] ✅ Monitoramento da COM2 iniciado - dados detectados serão alertados no console
+2025-10-24 05:41:42.573 -03:00 [INF] PKL Bridge Console Worker executando...
+2025-10-24 05:41:42.575 -03:00 [INF] Starting PKL Serial Bridge
+2025-10-24 05:41:42.576 -03:00 [INF] Starting Named Pipe Server with pipe name: pkl_serial
+2025-10-24 05:41:42.579 -03:00 [INF] Waiting for client connection on pipe: pkl_serial
+2025-10-24 05:41:42.581 -03:00 [INF] Named Pipe Server started successfully
+2025-10-24 05:41:42.582 -03:00 [INF] PKL Serial Bridge started successfully
+2025-10-24 05:41:42.587 -03:00 [INF] 💚 Health Check - Bridge: Rodando, Memória: 1MB, Uptime: 0.0min
+2025-10-24 05:41:42.593 -03:00 [INF] Application started. Press Ctrl+C to shut down.
+2025-10-24 05:41:42.594 -03:00 [INF] Hosting environment: Production
+2025-10-24 05:41:42.595 -03:00 [INF] Content root path: E:\Projetos\Andrey\Projetos\InterfacePKL\PklBridge.ConsoleApp
+2025-10-24 05:41:49.655 -03:00 [INF] Application is shutting down...
+2025-10-24 05:41:49.657 -03:00 [INF] PKL Bridge Console Worker parando...
+2025-10-24 05:41:49.659 -03:00 [INF] Stopping PKL Serial Bridge
+2025-10-24 05:41:49.660 -03:00 [INF] Stopping Named Pipe Server
+2025-10-24 05:41:49.663 -03:00 [INF] Named pipe server operation cancelled
+2025-10-24 05:41:49.664 -03:00 [INF] Named Pipe Server stopped
+2025-10-24 05:41:49.665 -03:00 [WRN] Serial port is not initialized
+2025-10-24 05:41:49.666 -03:00 [INF] PKL Serial Bridge stopped successfully
+2025-10-24 05:41:49.667 -03:00 [INF] PKL Bridge Console Worker cancelado
+2025-10-24 05:41:49.669 -03:00 [INF] PKL Bridge Console Worker parou

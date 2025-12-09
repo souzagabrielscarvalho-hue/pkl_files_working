@@ -1,0 +1,20 @@
+# Visual Studio
+.vs/
+*.user
+*.suo
+
+# Build outputs
+bin/
+obj/
+out/
+
+# NuGet
+packages/
+*.nupkg
+
+# Logs (opcional - manter histórico pode ser útil)
+# logs/
+
+# IDE
+.idea/
+*.swp
