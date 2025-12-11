@@ -138,12 +138,11 @@ static IHostBuilder CreateHostBuilder(string[] args) =>
             services.AddScoped<IAstmParser, AstmMessageParser>();
             services.AddScoped<IMessageProcessor, MessageProcessor>();
             
-            // ESCOLHA AQUI: Mock para testes OU API Real
-            // Para TESTES (dados fictícios):
-            services.AddScoped<IVidaApiClient, MockVidaApiClient>();
+            // API VIDA REAL DE PRODUÇÃO
+            services.AddHttpClient<IVidaApiClient, VidaApiClient>();
             
-            // Para PRODUÇÃO (API VIDA real - descomente a linha abaixo e comente a linha acima):
-            // services.AddHttpClient<IVidaApiClient, VidaApiClient>();
+            // Para TESTES com dados fictícios (descomente a linha abaixo e comente a linha acima):
+            // services.AddScoped<IVidaApiClient, MockVidaApiClient>();
             
             services.AddScoped<IAstmMessageBuilder, AstmMessageBuilder>();
             services.AddScoped<IExamOrderService, ExamOrderService>();

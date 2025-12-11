@@ -623,36 +623,49 @@ public class ConsoleWorker : BackgroundService
     {
         try
         {
-            _logger.LogInformation("🔍 Buscando exames para paciente {PatientId}...", patientId);
+            _logger.LogInformation("🔍 Buscando exames para tag_id {TagId} na API VIDA...", patientId);
             
-            // 1. Buscar dados do paciente
-            var patientResponse = await _vidaClient.GetPatientAsync(patientId, cancellationToken);
-            if (!patientResponse.Success || patientResponse.Data == null)
-            {
-                _logger.LogWarning("⚠️ Paciente {PatientId} não encontrado", patientId);
-                await SendAstmResponse(clientEndpoint, 0x04, "EOT", "Paciente não encontrado", cancellationToken);
-                return;
-            }
+            // 1. Buscar exames usando a API real de produção
+            var examResponse = await _vidaClient.GetExamsByTagAsync(
+                _vidaSettings.FranchiseCredentialId,
+                patientId,  // tag_id
+                cancellationToken);
 
-            var patient = patientResponse.Data;
-            _logger.LogInformation("✅ Paciente encontrado: {PatientName}", $"{patient.FirstName} {patient.LastName}");
-
-            // 2. Buscar pedidos de exames
-            var ordersResponse = await _vidaClient.GetOrdersForPatientAsync(patientId, cancellationToken);
-            if (!ordersResponse.Success || ordersResponse.Data == null || !ordersResponse.Data.Any())
+            if (!examResponse.Success || examResponse.Data == null || examResponse.Data.Data == null || !examResponse.Data.Data.Any())
             {
-                _logger.LogWarning("⚠️ Nenhum exame encontrado para paciente {PatientId}", patientId);
+                _logger.LogWarning("⚠️ Nenhum exame encontrado para tag_id {TagId}. Mensagem: {Message}", 
+                    patientId, examResponse.Data?.Message ?? examResponse.ErrorMessage);
                 await SendAstmResponse(clientEndpoint, 0x04, "EOT", "Sem exames disponíveis", cancellationToken);
                 return;
             }
 
-            var orders = ordersResponse.Data;
-            var order = orders.First(); // Pegar primeiro pedido
-            
-            _logger.LogInformation("📋 Encontrados {TestCount} exames: {TestCodes}", 
-                order.TestCodes.Count, string.Join(", ", order.TestCodes));
+            var exams = examResponse.Data.Data;
+            _logger.LogInformation("✅ Encontrados {ExamCount} exames para tag_id {TagId}: {ExamCodes}", 
+                exams.Count, patientId, string.Join(", ", exams.Select(e => $"{e.ExamCode}/{e.Test}")));
 
-            // 3. Construir mensagem ASTM Order
+            // 2. Criar dados mínimos do paciente (API não retorna dados do paciente)
+            // IMPORTANTE: Não inventar idade nem gênero - deixar vazios
+            var patient = new Core.Models.PatientData
+            {
+                Id = patientId,
+                FirstName = $"Paciente {patientId}",  // Nome identificável com tag_id
+                LastName = "",
+                Gender = "",  // Vazio - não inventar
+                BirthDate = null  // Null - não inventar
+            };
+
+            // 3. Criar order com os testes retornados pela API
+            var testCodes = exams.Select(e => e.Test).ToList();
+            var order = new Core.Interfaces.ExamOrder
+            {
+                OrderId = $"ORD-{patientId}",
+                PatientId = patientId,
+                TestCodes = testCodes,
+                OrderDateTime = DateTime.Now,
+                Priority = "R"
+            };
+
+            // 4. Construir mensagem ASTM Order
             var astmMessage = BuildAstmOrderMessage(patientId, patient, order);
             
             _logger.LogInformation("📄 Mensagem ASTM construída: {MessageLength} caracteres", astmMessage.Length);
@@ -721,8 +734,12 @@ public class ConsoleWorker : BackgroundService
             : "30";
         sb.Append($"P|1||||{patientName}|||{patient.Gender}||||||{age}^Y\r");
 
-        // O - Order Record - ORIGINAL
-        var sampleId = $"{patientId}^^^^N";  // Formato: ID^^^^Type
+        // O - Order Record - USANDO ID Mode (SEM ^ inicial)
+        // Formato correto baseado no log de referência: SampleID^^^^Type
+        // IMPORTANTE: São 4 CARETS (^^^^), não 3!
+        // Estrutura: SampleID^Rack^Position^Diluent^Type (3 campos vazios + Type)
+        // Exemplo funcionando: 112233^^^^N
+        var sampleId = $"{patientId}^^^^N";  // 031220251276^^^^N (4 carets!)
         var testCodesList = string.Join("`", order.TestCodes.Select(t => $"^^^{t}"));
         
         sb.Append($"O|2|{sampleId}||{testCodesList}|R|{timestamp}|||||||||Plasma||||||||||O\r");
