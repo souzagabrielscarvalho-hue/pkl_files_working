@@ -79,15 +79,21 @@ public class Program
                 // Register core services
                 services.AddScoped<IAstmParser, AstmMessageParser>();
                 services.AddScoped<IMessageProcessor, MessageProcessor>();
-                services.AddScoped<IVidaApiClient, MockVidaApiClient>();
+                services.AddScoped<IAstmMessageBuilder, AstmMessageBuilder>();
+                services.AddScoped<IExamOrderService, ExamOrderService>();
+                
+                // API VIDA REAL DE PRODUÇÃO
+                services.AddHttpClient<IVidaApiClient, VidaApiClient>();
 
                 // Register infrastructure services
                 services.AddSingleton<PklNamedPipeServer>();
                 services.AddSingleton<SerialPortClient>();
                 services.AddSingleton<SerialBridge>();
-
-                // Configure HTTP client for VIDA API
-                services.AddVidaApiHttpClient(configuration);
+                services.AddSingleton<TcpServer>(); // TCP Server para HLAB
+                services.AddSingleton<AstmSessionManager>(); // ASTM Session Manager
+                services.AddSingleton<AstmMessageBuilder>(); // ASTM Message Builder
+                services.AddSingleton<ExamRequestService>(); // Exam Request Service
+                services.AddSingleton<ResultProcessor>(); // Result Processor para enviar resultados para API VIDA
 
                 // Register the main worker
                 services.AddHostedService<Worker>();
