@@ -15,6 +15,9 @@ packages/
 # Logs (opcional - manter histórico pode ser útil)
 # logs/
 
+# Memory Bank (apenas local - não versionar)
+memorybank/
+
 # IDE
 .idea/
 *.swp

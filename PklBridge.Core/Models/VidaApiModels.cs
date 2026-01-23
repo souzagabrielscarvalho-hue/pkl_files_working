@@ -8,17 +8,34 @@ public class VidaExamResponse
 {
     public string Message { get; set; } = string.Empty;
     public List<VidaExamData> Data { get; set; } = new();
-    public int RackPosition { get; set; } = 1;
-    public int PositionNumber { get; set; } = 1;
 }
 
 /// <summary>
 /// Dados de um exame retornado pela API VIDA
+/// Inclui informações do paciente e detalhes do exame
 /// </summary>
 public class VidaExamData
 {
+    [System.Text.Json.Serialization.JsonPropertyName("exam_code")]
     public string ExamCode { get; set; } = string.Empty;
+    
+    [System.Text.Json.Serialization.JsonPropertyName("test")]
     public string Test { get; set; } = string.Empty;
+    
+    [System.Text.Json.Serialization.JsonPropertyName("patient_name")]
+    public string PatientName { get; set; } = string.Empty;
+    
+    [System.Text.Json.Serialization.JsonPropertyName("birth_date")]
+    public string BirthDate { get; set; } = string.Empty;
+    
+    [System.Text.Json.Serialization.JsonPropertyName("gender")]
+    public string Gender { get; set; } = string.Empty;
+    
+    [System.Text.Json.Serialization.JsonPropertyName("age")]
+    public int Age { get; set; }
+    
+    [System.Text.Json.Serialization.JsonPropertyName("sample_type")]
+    public List<string> SampleType { get; set; } = new();
 }
 
 /// <summary>
@@ -56,7 +73,7 @@ public class VidaResultResponse
 /// </summary>
 public class VidaResultProcessed
 {
-    public string ProcedureResultId { get; set; } = string.Empty;
+    public int ProcedureResultId { get; set; }
     public string ExamCode { get; set; } = string.Empty;
     public string Test { get; set; } = string.Empty;
     public string Value { get; set; } = string.Empty;

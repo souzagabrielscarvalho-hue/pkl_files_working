@@ -120,24 +120,42 @@ public class MockVidaApiClient : IVidaApiClient
 
         _logger.LogInformation("MOCK: Buscando exames para etiqueta {TagId}", tagId);
 
-        // Simular resposta da API VIDA com exames mockados
-        // IMPORTANTE: Position é um campo separado, não deve ser o mesmo que o tagId
-        // A API VIDA real deve retornar a posição física do tubo no rack
-        int rackPosition = 1;
-        int positionNumber = 7;  // Exemplo: posição 7 no rack (independente do ID do paciente)
-        
-        // TODO: Quando integrar com API VIDA real, esses valores devem vir do sistema
-
+        // Simular resposta da API VIDA com novos campos de paciente
         var response = new VidaExamResponse
         {
             Message = "Procedimentos encontrados com sucesso!",
-            RackPosition = rackPosition,
-            PositionNumber = positionNumber,
             Data = new List<VidaExamData>
             {
-                new VidaExamData { ExamCode = "TCO", Test = "TCO" },
-                new VidaExamData { ExamCode = "PCR", Test = "PCR" },
-                new VidaExamData { ExamCode = "GLUC", Test = "GLUC" }
+                new VidaExamData 
+                { 
+                    ExamCode = "TCO", 
+                    Test = "TCO",
+                    PatientName = "João da Silva Mock",
+                    BirthDate = "1980-05-15",
+                    Gender = "M",
+                    Age = 44,
+                    SampleType = new List<string> { "SORO" }
+                },
+                new VidaExamData 
+                { 
+                    ExamCode = "PCR", 
+                    Test = "PCR",
+                    PatientName = "João da Silva Mock",
+                    BirthDate = "1980-05-15",
+                    Gender = "M",
+                    Age = 44,
+                    SampleType = new List<string> { "SORO" }
+                },
+                new VidaExamData 
+                { 
+                    ExamCode = "GLUC", 
+                    Test = "GLUC",
+                    PatientName = "João da Silva Mock",
+                    BirthDate = "1980-05-15",
+                    Gender = "M",
+                    Age = 44,
+                    SampleType = new List<string> { "SORO" }
+                }
             }
         };
 
@@ -156,9 +174,9 @@ public class MockVidaApiClient : IVidaApiClient
         var response = new VidaResultResponse
         {
             Message = "Resultados dos procedimentos atualizados com sucesso!",
-            Data = request.Results.Select(r => new VidaResultProcessed
+            Data = request.Results.Select((r, index) => new VidaResultProcessed
             {
-                ProcedureResultId = Guid.NewGuid().ToString(),
+                ProcedureResultId = 1000 + index,
                 ExamCode = r.ExamCode,
                 Test = r.Test,
                 Value = r.Value

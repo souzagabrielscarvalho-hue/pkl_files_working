@@ -156,6 +156,7 @@ static IHostBuilder CreateHostBuilder(string[] args) =>
             services.AddSingleton<AstmSessionManager>(); // ASTM Session Manager
             services.AddSingleton<AstmMessageBuilder>(); // ASTM Message Builder (singleton para ExamRequestService)
             services.AddSingleton<ExamRequestService>(); // Exam Request Service
+            services.AddSingleton<ResultProcessor>(); // Result Processor para enviar resultados para API VIDA
 
             // Register console services
             services.AddScoped<InteractiveMenu>();

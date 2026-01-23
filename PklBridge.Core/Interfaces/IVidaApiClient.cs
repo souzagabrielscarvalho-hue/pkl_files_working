@@ -59,6 +59,7 @@ public class ExamOrder
     public DateTime OrderDateTime { get; set; }
     public string Priority { get; set; } = string.Empty;
     public string Status { get; set; } = string.Empty;
+    public string? SampleType { get; set; }  // Tipo de amostra (SORO, Plasma, etc)
     public Dictionary<string, object> CustomFields { get; set; } = new();
 }
 

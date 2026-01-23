@@ -75,6 +75,18 @@ public class ExamRequestService
                 return result;
             }
 
+            // Validar dados do paciente (primeiro exame contém os dados)
+            var firstExam = exams.First();
+            if (string.IsNullOrEmpty(firstExam.PatientName))
+            {
+                _logger.LogWarning("⚠️ Dados de paciente incompletos para etiqueta {TagId}", tagId);
+            }
+            else
+            {
+                _logger.LogInformation("👤 Paciente: {PatientName}, Idade: {Age}, Gênero: {Gender}", 
+                    firstExam.PatientName, firstExam.Age, firstExam.Gender);
+            }
+
             _logger.LogInformation("✅ Encontrados {ExamCount} exames: {ExamCodes}", 
                 exams.Count, string.Join(", ", exams.Select(e => e.ExamCode)));
 
@@ -82,8 +94,8 @@ public class ExamRequestService
             result.ExamCodes = exams.Select(e => e.ExamCode).ToList();
 
             // 2. Gerar mensagem ASTM Order
-            _logger.LogDebug("📝 Gerando mensagem ASTM Order com Rack={RackPosition}, Position={PositionNumber}", 
-                apiResponse.Data.RackPosition, apiResponse.Data.PositionNumber);
+            _logger.LogDebug("📝 Gerando mensagem ASTM Order para paciente {PatientName}", 
+                firstExam.PatientName);
             
             var astmMessage = BuildAstmOrderMessage(tagId, apiResponse.Data);
             result.AstmMessage = astmMessage;
@@ -138,24 +150,40 @@ public class ExamRequestService
     }
 
     /// <summary>
-    /// Constrói mensagem ASTM Order completa
+    /// Constrói mensagem ASTM Order completa usando dados da API VIDA
     /// </summary>
     private string BuildAstmOrderMessage(string tagId, VidaExamResponse examResponse)
     {
         var message = new StringBuilder();
         var timestamp = DateTime.Now.ToString("yyyyMMddHHmmss");
 
+        // Pegar dados do primeiro exame (todos têm os mesmos dados de paciente)
+        var firstExam = examResponse.Data.FirstOrDefault();
+        
+        // Valores padrão se não houver dados
+        var patientName = firstExam?.PatientName ?? $"Paciente {tagId}";
+        var birthDate = firstExam?.BirthDate ?? DateTime.Now.AddYears(-30).ToString("yyyy-MM-dd");
+        var gender = firstExam?.Gender ?? "M";
+        var sampleType = firstExam?.SampleType?.FirstOrDefault() ?? "SORO";
+
+        // Converter data de nascimento para formato ASTM (yyyyMMdd)
+        var birthDateFormatted = DateTime.TryParse(birthDate, out var parsedDate) 
+            ? parsedDate.ToString("yyyyMMdd") 
+            : DateTime.Now.AddYears(-30).ToString("yyyyMMdd");
+
         // H - Header Record
         message.AppendLine($"H|\\^&|||PKL Bridge^1.0^PKL125|||||||P|1|{timestamp}");
 
-        // P - Patient Record - TODOS os campos preenchidos como log.txt
+        // P - Patient Record - Usando dados reais da API VIDA
         // P|seq|Practice ID|Lab ID|ID3|Patient Name|Mother Name|DOB|Sex|Race|Address|Reserved|Phone|Physician|Special1|Special2|Height|Weight|Diagnosis|Medication|Diet|Practice1|Practice2|Admission|Discharge|Attending|Specialty
-        message.AppendLine($"P|1|||{tagId}|Paciente {tagId}||{DateTime.Now.AddYears(-30):yyyyMMdd}|M||||||||||||||||||||");
+        message.AppendLine($"P|1|||{tagId}|{patientName}||{birthDateFormatted}|{gender}||||||||||||||||||||");
 
         // O - Order Record - Formato correto segundo log.txt: ID^^^^Type
         var sampleId = $"{tagId}^^^^N";
         var testCodes = string.Join("`", examResponse.Data.Select(e => $"^^^{e.Test}"));
-        message.AppendLine($"O|2|{sampleId}|{tagId}|{testCodes}|R|{timestamp}|||||||||Plasma||||||||||O");
+        
+        // Usar tipo de amostra da API (SORO, PLASMA, etc.)
+        message.AppendLine($"O|2|{sampleId}|{tagId}|{testCodes}|R|{timestamp}|||||||||{sampleType}||||||||||O");
 
         // L - Terminator Record
         message.AppendLine($"L|1|N");

@@ -54,7 +54,7 @@ public class AstmSessionManager
         
         try
         {
-            _logger.LogInformation("🔄 Iniciando sessão ASTM para enviar mensagem ao cliente {ClientEndpoint} (Resposta a Query: {IsResponse})", 
+            _logger.LogInformation("[Bridge→HLAB] Sessão ASTM iniciada | Cliente: {ClientEndpoint} | Resposta: {IsResponse}", 
                 clientEndpoint, isResponseToQuery);
 
             // 1. Enviar ENQ e aguardar ACK (APENAS se não for resposta a Query)
@@ -62,18 +62,16 @@ public class AstmSessionManager
             {
                 if (!await SendEnqAndWaitAckAsync(clientEndpoint, cancellationToken))
                 {
-                    _logger.LogError("❌ Falha ao iniciar sessão ASTM - ENQ não foi confirmado");
+                    _logger.LogError("[Bridge→HLAB] ENQ não confirmado");
                     return false;
                 }
             }
             else
             {
-                _logger.LogInformation("⏭️ Pulando ENQ - Enviando frames diretamente (resposta a Query do HLAB)");
             }
 
             // 2. Dividir mensagem em frames SEPARADOS (H, P, O, L) e enviar COM DELAYS
             var frames = SplitIntoFramesSeparated(message);
-            _logger.LogInformation("📦 Mensagem dividida em {FrameCount} frames separados", frames.Count);
 
             for (int i = 0; i < frames.Count; i++)
             {
@@ -82,22 +80,20 @@ public class AstmSessionManager
                 
                 if (!await SendFrameAndWaitAckAsync(clientEndpoint, frameNumber, frame, cancellationToken))
                 {
-                    _logger.LogError("❌ Falha ao enviar frame {FrameNumber}", frameNumber);
+                    _logger.LogError("[Bridge→HLAB] Falha frame {FrameNumber}", frameNumber);
                     return false;
                 }
-                
-                _logger.LogInformation("✅ Frame {FrameNumber} enviado e confirmado", frameNumber);
             }
 
             // 3. Enviar EOT para finalizar
             await SendEotAsync(clientEndpoint, cancellationToken);
             
-            _logger.LogInformation("✅ Sessão ASTM concluída com sucesso - {FrameCount} frames + Terminator enviados", frames.Count);
+            _logger.LogInformation("[Bridge→HLAB] Sessão concluída | Frames: {FrameCount}", frames.Count);
             return true;
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "❌ Erro durante sessão ASTM");
+            _logger.LogError(ex, "[ERRO] Sessão ASTM");
             return false;
         }
         finally

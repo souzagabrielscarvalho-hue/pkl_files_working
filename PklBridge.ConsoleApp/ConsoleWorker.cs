@@ -22,6 +22,8 @@ public class ConsoleWorker : BackgroundService
     private readonly IExamOrderService _examOrderService;
     private readonly ExamRequestService _examRequestService;
     private readonly AstmSessionManager _astmSessionManager;
+    private readonly ResultProcessor _resultProcessor;
+    private readonly IAstmParser _astmParser;
     
     // Armazenar mensagens pendentes para envio quando HLAB reconectar
     private readonly ConcurrentDictionary<string, string> _pendingMessages = new();
@@ -37,7 +39,9 @@ public class ConsoleWorker : BackgroundService
         IMessageProcessor messageProcessor,
         IExamOrderService examOrderService,
         ExamRequestService examRequestService,
-        AstmSessionManager astmSessionManager)
+        AstmSessionManager astmSessionManager,
+        ResultProcessor resultProcessor,
+        IAstmParser astmParser)
     {
         _logger = logger;
         _bridgeSettings = bridgeSettings.Value;
@@ -50,6 +54,8 @@ public class ConsoleWorker : BackgroundService
         _examOrderService = examOrderService;
         _examRequestService = examRequestService;
         _astmSessionManager = astmSessionManager;
+        _resultProcessor = resultProcessor;
+        _astmParser = astmParser;
     }
 
     public override async Task StartAsync(CancellationToken cancellationToken)
@@ -323,91 +329,77 @@ public class ConsoleWorker : BackgroundService
                     return; // Retorna SEM LOGAR para não consumir o evento
                 }
                 
-                // EOT: Logar para debugging
-                if (controlChar == 0x04) // EOT
+                // EOT: HLAB finalizou transmissão - ENVIAR RESULTADOS PARA API VIDA
+                if (controlChar == 0x04)
                 {
-                    _logger.LogInformation("🔍 DETECTADO: EOT (End of Transmission) - HLAB finalizou e vai desconectar");
-                    _logger.LogInformation("⏳ Aguardando HLAB se reconectar com ENQ para enviar mensagens pendentes ({Count})...", _pendingMessages.Count);
+                    _logger.LogInformation("[HLAB→Bridge] EOT recebido | Finalizando sessão e enviando resultados para API VIDA");
+                    
+                    // Finalizar sessão e enviar resultados acumulados
+                    await _resultProcessor.FinalizeSessionAsync(e.ClientEndpoint, CancellationToken.None);
+                    
+                    _logger.LogInformation("[HLAB→Bridge] Sessão finalizada | Pendentes: {Count}", _pendingMessages.Count);
                     return;
                 }
                 
-                // ENQ: Verificar se há mensagem pendente para enviar
-                if (controlChar == 0x05) // ENQ
+                // ENQ: HLAB quer iniciar comunicação
+                if (controlChar == 0x05)
                 {
-                    _logger.LogInformation("🔍 DETECTADO: ENQ (Enquiry) - HLAB reconectou!");
+                    _logger.LogInformation("[HLAB→Bridge] ENQ recebido | Pendentes: {Count}", _pendingMessages.Count);
                     
-                    // Verificar se há mensagens pendentes
                     if (_pendingMessages.Count > 0)
                     {
-                        _logger.LogInformation("📦 DETECTADO {Count} mensagem(ns) pendente(s)!", _pendingMessages.Count);
-                        
-                        // Pegar primeira mensagem pendente
                         var firstPending = _pendingMessages.First();
                         var patientId = firstPending.Key;
                         var astmMessage = firstPending.Value;
                         
-                        _logger.LogInformation("📤 Enviando mensagem pendente para paciente {PatientId}", patientId);
-                        
-                        // Enviar ACK primeiro
                         await _tcpServer.SendToClientAsync(e.ClientEndpoint, new byte[] { 0x06 }, CancellationToken.None);
-                        _logger.LogInformation("✅ ACK enviado para ENQ");
-                        
-                        // Aguardar um pouco
                         await Task.Delay(500);
                         
-                        // ENVIAR frames DIRETAMENTE (HLAB já enviou ENQ, não precisamos enviar outro!)
                         var success = await _astmSessionManager.SendAstmMessageAsync(
                             e.ClientEndpoint,
                             astmMessage,
-                            isResponseToQuery: true,  // Pula ENQ! HLAB já iniciou a sessão
+                            isResponseToQuery: true,
                             CancellationToken.None);
                         
                         if (success)
                         {
-                            _logger.LogInformation("✅ Mensagem enviada com sucesso para paciente {PatientId}!", patientId);
-                            // Remover mensagem da fila
+                            _logger.LogInformation("[Bridge→HLAB] Mensagem enviada | Paciente: {PatientId}", patientId);
                             _pendingMessages.TryRemove(patientId, out _);
                         }
                         else
                         {
-                            _logger.LogError("❌ Falha ao enviar mensagem para paciente {PatientId}", patientId);
+                            _logger.LogError("[Bridge→HLAB] Falha ao enviar | Paciente: {PatientId}", patientId);
                         }
                     }
                     else
                     {
-                        // Sem mensagens pendentes, apenas responder ACK
-                        _logger.LogInformation("📭 Nenhuma mensagem pendente - apenas respondendo ACK");
                         await _tcpServer.SendToClientAsync(e.ClientEndpoint, new byte[] { 0x06 }, CancellationToken.None);
-                        _logger.LogInformation("✅ ACK enviado para ENQ");
                     }
                     
                     return;
                 }
             }
 
-            _logger.LogInformation("📨 Dados recebidos via TCP de {ClientEndpoint}: {BytesCount} bytes", 
-                e.ClientEndpoint, e.Data.Length);
-
-            if (_bridgeSettings.LogAllTraffic)
+            // Frame ASTM: Enviar ACK e processar
+            if (e.Data.Length > 2 && e.Data[0] == 0x02)
             {
-                var hexData = Convert.ToHexString(e.Data);
-                _logger.LogDebug("📨 TCP Data (HEX): {HexData}", hexData);
-            }
-
-            // CRÍTICO: Se é um frame ASTM (STX...ETX+checksum), enviar ACK imediatamente!
-            if (e.Data.Length > 2 && e.Data[0] == 0x02) // STX
-            {
-                // Procurar ETX
+                // Enviar ACK
                 for (int i = 1; i < e.Data.Length; i++)
                 {
-                    if (e.Data[i] == 0x03) // ETX
+                    if (e.Data[i] == 0x03)
                     {
-                        // Frame ASTM completo detectado - enviar ACK imediatamente
-                        _logger.LogInformation("🔍 DETECTADO: Frame ASTM (STX...ETX) - enviando ACK");
                         await _tcpServer.SendToClientAsync(e.ClientEndpoint, new byte[] { 0x06 }, CancellationToken.None);
-                        _logger.LogInformation("✅ ACK enviado para frame ASTM");
                         break;
                     }
+                }
+                
+                // Parsear mensagem ASTM
+                var messages = _astmParser.Parse(e.Data);
+                
+                // Processar cada mensagem (incluindo resultados)
+                foreach (var message in messages)
+                {
+                    await _resultProcessor.ProcessMessageAsync(message, e.ClientEndpoint, CancellationToken.None);
                 }
             }
 
@@ -416,7 +408,7 @@ public class ConsoleWorker : BackgroundService
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "❌ Erro ao processar dados TCP de {ClientEndpoint}", e.ClientEndpoint);
+            _logger.LogError(ex, "[ERRO] Processamento TCP | Cliente: {ClientEndpoint}", e.ClientEndpoint);
         }
     }
 
@@ -424,107 +416,30 @@ public class ConsoleWorker : BackgroundService
     {
         try
         {
-            _logger.LogInformation("🔄 PROCESSANDO {BytesCount} bytes recebidos via TCP:", data.Length);
-            
-            // 1. DADOS EM HEX (para debug técnico)
-            var hexData = Convert.ToHexString(data);
-            _logger.LogInformation("📄 HEX: {HexData}", hexData);
-            
-            // 2. DADOS EM ASCII (legível)
             var asciiData = System.Text.Encoding.ASCII.GetString(data);
-            _logger.LogInformation("📝 ASCII: '{AsciiData}'", asciiData);
             
-            // 3. DADOS COM CARACTERES DE CONTROLE VISÍVEIS
-            var visibleData = System.Text.Encoding.ASCII.GetString(data)
-                .Replace("\r", "\\r")
-                .Replace("\n", "\\n")
-                .Replace("\t", "\\t")
-                .Replace("\0", "\\0")
-                .Replace("\x01", "<SOH>")
-                .Replace("\x02", "<STX>")
-                .Replace("\x03", "<ETX>")
-                .Replace("\x04", "<EOT>")
-                .Replace("\x05", "<ENQ>")
-                .Replace("\x06", "<ACK>")
-                .Replace("\x15", "<NAK>");
-                
-            _logger.LogInformation("👁️ VISÍVEL: '{VisibleData}'", visibleData);
-            
-            // 4. BYTES INDIVIDUAIS (para análise detalhada)
-            var byteValues = string.Join(" ", data.Select(b => $"{b:D3}({b:X2})"));
-            _logger.LogInformation("🔢 BYTES: {ByteValues}", byteValues);
-            
-            // 5. TENTAR DETECTAR E RESPONDER AO PROTOCOLO ASTM
-            if (data.Length > 0)
+            // Log apenas se for Query do HLAB
+            if (data.Length > 0 && data[0] == 0x02 && asciiData.Contains("Q|"))
             {
-                var firstByte = data[0];
-                var lastByte = data[data.Length - 1];
-                
-                _logger.LogInformation("🎯 ANÁLISE: Primeiro={FirstByte}({FirstHex}), Último={LastByte}({LastHex})", 
-                    firstByte, firstByte.ToString("X2"), lastByte, lastByte.ToString("X2"));
-                
-                // PROTOCOLO ASTM - Respostas automáticas
-                if (firstByte == 0x05) // ENQ
+                var patientId = ExtractPatientIdFromQuery(asciiData);
+                if (!string.IsNullOrEmpty(patientId))
                 {
-                    _logger.LogInformation("🔍 DETECTADO: ENQ (Enquiry) - HLAB quer iniciar comunicação");
-                    await SendAstmResponse(clientEndpoint, 0x06, "ACK", "Confirmar comunicação", cancellationToken);
-                }
-                else if (firstByte == 0x04) // EOT
-                {
-                    _logger.LogInformation("🔍 DETECTADO: EOT (End of Transmission) - HLAB finalizou comunicação");
-                }
-                else if (firstByte == 0x02) // STX
-                {
-                    _logger.LogInformation("🔍 DETECTADO: STX - Início de mensagem ASTM");
-                    if (lastByte == 0x03) // ETX
-                        _logger.LogInformation("🔍 DETECTADO: ETX - Fim de mensagem ASTM");
+                    _logger.LogInformation("[HLAB→Bridge] Query recebida | Paciente: {PatientId}", patientId);
                     
-                    // Verificar se é uma Query (Q)
-                    if (asciiData.Contains("Q|"))
-                    {
-                        _logger.LogInformation("🔍 DETECTADO: QUERY (Q) - HLAB solicitando exames!");
-                        
-                        // Extrair ID do paciente da Query
-                        var patientId = ExtractPatientIdFromQuery(asciiData);
-                        if (!string.IsNullOrEmpty(patientId))
-                        {
-                            _logger.LogInformation("🔍 ID do Paciente extraído: {PatientId}", patientId);
-                            
-                            // Enviar ACK primeiro
-                            await SendAstmResponse(clientEndpoint, 0x06, "ACK", "Confirmar recebimento Query", cancellationToken);
-                            
-                            // Aguardar um pouco antes de enviar (dar tempo para HLAB processar ACK)
-                            await Task.Delay(100, cancellationToken);
-                            
-                            // Enviar exames DIRETAMENTE (resposta a Query)
-                            await SendExamsForPatient(patientId, clientEndpoint, cancellationToken);
-                        }
-                        else
-                        {
-                            _logger.LogWarning("⚠️ Não foi possível extrair ID do paciente da Query");
-                            await SendAstmResponse(clientEndpoint, 0x06, "ACK", "Confirmar recebimento Query", cancellationToken);
-                        }
-                    }
-                    else
-                    {
-                        // Enviar ACK para confirmar recebimento da mensagem
-                        await SendAstmResponse(clientEndpoint, 0x06, "ACK", "Confirmar recebimento mensagem ASTM", cancellationToken);
-                    }
+                    await SendAstmResponse(clientEndpoint, 0x06, "ACK", "Query confirmada", cancellationToken);
+                    await Task.Delay(100, cancellationToken);
+                    await SendExamsForPatient(patientId, clientEndpoint, cancellationToken);
                 }
-                else if (firstByte == 0x15) // NAK
+                else
                 {
-                    _logger.LogInformation("🔍 DETECTADO: NAK (Not Acknowledged) - Erro na comunicação");
+                    _logger.LogWarning("[HLAB→Bridge] Query sem ID válido");
+                    await SendAstmResponse(clientEndpoint, 0x06, "ACK", "Query confirmada", cancellationToken);
                 }
-                
-                if (asciiData.Contains("|"))
-                    _logger.LogInformation("🔍 DETECTADO: Contém separadores ASTM (|)");
             }
-            
-            _logger.LogInformation("✅ Dados analisados e exibidos em detalhes");
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "❌ Erro ao processar dados ASTM via TCP");
+            _logger.LogError(ex, "[ERRO] Processamento ASTM");
         }
     }
 
@@ -623,100 +538,86 @@ public class ConsoleWorker : BackgroundService
     {
         try
         {
-            _logger.LogInformation("🔍 Buscando exames para tag_id {TagId} na API VIDA...", patientId);
-            
-            // 1. Buscar exames usando a API real de produção
             var examResponse = await _vidaClient.GetExamsByTagAsync(
                 _vidaSettings.FranchiseCredentialId,
-                patientId,  // tag_id
+                patientId,
                 cancellationToken);
 
             if (!examResponse.Success || examResponse.Data == null || examResponse.Data.Data == null || !examResponse.Data.Data.Any())
             {
-                _logger.LogWarning("⚠️ Nenhum exame encontrado para tag_id {TagId}. Mensagem: {Message}", 
-                    patientId, examResponse.Data?.Message ?? examResponse.ErrorMessage);
-                await SendAstmResponse(clientEndpoint, 0x04, "EOT", "Sem exames disponíveis", cancellationToken);
+                _logger.LogWarning("[API VIDA] Sem exames | Tag: {TagId}", patientId);
+                await SendAstmResponse(clientEndpoint, 0x04, "EOT", "Sem exames", cancellationToken);
                 return;
             }
 
             var exams = examResponse.Data.Data;
-            _logger.LogInformation("✅ Encontrados {ExamCount} exames para tag_id {TagId}: {ExamCodes}", 
-                exams.Count, patientId, string.Join(", ", exams.Select(e => $"{e.ExamCode}/{e.Test}")));
+            var firstExam = exams.First();
+            
+            _logger.LogInformation("[API VIDA] {ExamCount} exames | Tag: {TagId} | Paciente: {PatientName}", 
+                exams.Count, patientId, firstExam.PatientName);
 
-            // 2. Criar dados mínimos do paciente (API não retorna dados do paciente)
-            // IMPORTANTE: Não inventar idade nem gênero - deixar vazios
+            // 2. Usar dados REAIS do paciente retornados pela API VIDA
             var patient = new Core.Models.PatientData
             {
                 Id = patientId,
-                FirstName = $"Paciente {patientId}",  // Nome identificável com tag_id
+                FirstName = firstExam.PatientName ?? $"Paciente {patientId}",
                 LastName = "",
-                Gender = "",  // Vazio - não inventar
-                BirthDate = null  // Null - não inventar
+                Gender = firstExam.Gender ?? "",
+                BirthDate = !string.IsNullOrEmpty(firstExam.BirthDate) && DateTime.TryParse(firstExam.BirthDate, out var parsedDate) 
+                    ? parsedDate 
+                    : (DateTime?)null
             };
 
-            // 3. Criar order com os testes retornados pela API
-            var testCodes = exams.Select(e => e.Test).ToList();
+            // 3. Filtrar exames "OBS" e pegar códigos dos testes
+            var testCodes = exams
+                .Where(e => e.Test != "OBS")
+                .Select(e => e.Test)
+                .Distinct()
+                .ToList();
+            
+            var sampleType = firstExam.SampleType?.FirstOrDefault() ?? "SORO";
+            var ageFromApi = firstExam.Age;
+            
             var order = new Core.Interfaces.ExamOrder
             {
                 OrderId = $"ORD-{patientId}",
                 PatientId = patientId,
                 TestCodes = testCodes,
                 OrderDateTime = DateTime.Now,
-                Priority = "R"
+                Priority = "R",
+                SampleType = sampleType
             };
-
-            // 4. Construir mensagem ASTM Order
-            var astmMessage = BuildAstmOrderMessage(patientId, patient, order);
             
-            _logger.LogInformation("📄 Mensagem ASTM construída: {MessageLength} caracteres", astmMessage.Length);
-            
-            // LOG COMPLETO E DETALHADO DA MENSAGEM
-            _logger.LogInformation("📄 ====== MENSAGEM ASTM COMPLETA ======");
-            _logger.LogInformation("📄 {AstmMessage}", astmMessage);
-            _logger.LogInformation("📄 ====== FIM DA MENSAGEM ======");
-            
-            // LOG COM CARACTERES VISÍVEIS
-            var visibleMessage = astmMessage
-                .Replace("\r", "<CR>")
-                .Replace("\n", "<LF>")
-                .Replace("|", "[PIPE]")
-                .Replace("^", "[CARET]")
-                .Replace("\\", "[BACKSLASH]");
-            _logger.LogInformation("👁️ MENSAGEM VISÍVEL: {VisibleMessage}", visibleMessage);
-
-            // 4. ENVIAR mensagem ASTM via protocolo completo (iniciando com ENQ)
-            _logger.LogInformation("🚀 Iniciando envio de mensagem ASTM via protocolo completo (com ENQ)...");
+            var astmMessage = BuildAstmOrderMessage(patientId, patient, order, ageFromApi);
             
             var success = await _astmSessionManager.SendAstmMessageAsync(
                 clientEndpoint,
                 astmMessage,
-                isResponseToQuery: false,  // ENVIA ENQ primeiro! É nossa vez de falar
+                isResponseToQuery: false,
                 cancellationToken);
             
             if (success)
             {
-                _logger.LogInformation("✅ Exames enviados com sucesso para paciente {PatientId} via protocolo ASTM completo!", patientId);
+                _logger.LogInformation("[Bridge→HLAB] Exames enviados | Paciente: {PatientId} | Testes: {TestCount}", 
+                    patientId, testCodes.Count);
             }
             else
             {
-                _logger.LogError("❌ Falha ao enviar exames para paciente {PatientId}", patientId);
+                _logger.LogError("[Bridge→HLAB] Falha ao enviar | Paciente: {PatientId}", patientId);
             }
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "❌ Erro ao buscar/enviar exames para paciente {PatientId}", patientId);
+            _logger.LogError(ex, "[ERRO] Envio exames | Paciente: {PatientId}", patientId);
             try
             {
-                await SendAstmResponse(clientEndpoint, 0x04, "EOT", "Erro ao processar", cancellationToken);
+                await SendAstmResponse(clientEndpoint, 0x04, "EOT", "Erro", cancellationToken);
             }
-            catch (Exception eotEx)
-            {
-                _logger.LogError(eotEx, "❌ Erro ao enviar EOT de erro");
-            }
+            catch { }
         }
     }
 
-    private string BuildAstmOrderMessage(string patientId, Core.Models.PatientData patient, Core.Interfaces.ExamOrder order)
+    private string BuildAstmOrderMessage(string patientId, Core.Models.PatientData patient, Core.Interfaces.ExamOrder order, int? ageFromApi = null)
     {
         var sb = new System.Text.StringBuilder();
         var timestamp = DateTime.Now.ToString("yyyyMMddHHmmss");
@@ -727,12 +628,20 @@ public class ConsoleWorker : BackgroundService
         sb.Append($"H|`^&|||PKL Bridge||||||||E1394-97|{timestamp}\r");
 
         // P - Patient Record
-        var birthDate = patient.BirthDate?.ToString("yyyyMMdd") ?? DateTime.Now.AddYears(-30).ToString("yyyyMMdd");
-        var patientName = $"{patient.FirstName} {patient.LastName}";
-        var age = patient.BirthDate.HasValue 
-            ? (DateTime.Now.Year - patient.BirthDate.Value.Year).ToString()
-            : "30";
-        sb.Append($"P|1||||{patientName}|||{patient.Gender}||||||{age}^Y\r");
+        var patientName = $"{patient.FirstName} {patient.LastName}".Trim();
+        
+        // Data de nascimento no formato ASTM (yyyyMMdd)
+        var birthDate = patient.BirthDate?.ToString("yyyyMMdd") ?? "";
+        
+        // IMPORTANTE: Estrutura ASTM E1394 correta!
+        // Campo 5: Patient Name
+        // Campo 6: Mother's Maiden Name (vazio)
+        // Campo 7: Birth Date (yyyyMMdd)
+        // Campo 8: Patient Sex (M/F)
+        // Campo 9-12: Vazios (Race, Address, Reserved, Attending Physician)
+        // Campo 13: Patient Age - REMOVIDO! HLAB calcula automaticamente da data de nascimento
+        //           e estava interpretando este campo como "Nome Médico"
+        sb.Append($"P|1||||{patientName}||{birthDate}|{patient.Gender}|||||\r");
 
         // O - Order Record - USANDO ID Mode (SEM ^ inicial)
         // Formato correto baseado no log de referência: SampleID^^^^Type
@@ -742,10 +651,65 @@ public class ConsoleWorker : BackgroundService
         var sampleId = $"{patientId}^^^^N";  // 031220251276^^^^N (4 carets!)
         var testCodesList = string.Join("`", order.TestCodes.Select(t => $"^^^{t}"));
         
-        sb.Append($"O|2|{sampleId}||{testCodesList}|R|{timestamp}|||||||||Plasma||||||||||O\r");
+        // IMPORTANTE: Usar SampleType da API, não hardcoded!
+        var sampleType = order.SampleType ?? "SORO";  // Usar tipo real da API
+        
+        sb.Append($"O|2|{sampleId}||{testCodesList}|R|{timestamp}|||||||||{sampleType}||||||||||O\r");
 
         // L - Terminator Record
         sb.Append($"L|1|N\r");
+
+        return sb.ToString();
+    }
+
+    // Construir mensagem ASTM com MÚLTIPLOS Order Records (um para cada exame)
+    private string BuildAstmOrderMessageMultiple(string patientId, Core.Models.PatientData patient, List<string> testCodes, string sampleType, int? ageFromApi = null)
+    {
+        var sb = new System.Text.StringBuilder();
+        var timestamp = DateTime.Now.ToString("yyyyMMddHHmmss");
+
+        // H - Header Record
+        sb.Append($"H|`^&|||PKL Bridge||||||||E1394-97|{timestamp}\r");
+
+        // P - Patient Record
+        var patientName = $"{patient.FirstName} {patient.LastName}".Trim();
+        var birthDate = patient.BirthDate?.ToString("yyyyMMdd") ?? "";
+        sb.Append($"P|1||||{patientName}||{birthDate}|{patient.Gender}|||||\r");
+
+        // O - Order Records - UM PARA CADA EXAME!
+        int orderSequence = 2;  // Começa em 2 (depois do Header e Patient)
+        foreach (var testCode in testCodes)
+        {
+            var sampleId = $"{patientId}^^^^N";
+            sb.Append($"O|{orderSequence}|{sampleId}||^^^{testCode}|R|{timestamp}|||||||||{sampleType}||||||||||O\r");
+            orderSequence++;
+        }
+
+        // L - Terminator Record
+        sb.Append($"L|1|N\r");
+
+        return sb.ToString();
+    }
+
+    // FUNÇÃO MOCK SEPARADA - Retorna dados exatos do log de referência
+    private string BuildMockAstmOrderMessage()
+    {
+        var sb = new System.Text.StringBuilder();
+        var timestamp = DateTime.Now.ToString("yyyyMMddHHmmss");
+
+        // DADOS EXATOS DO LOG DE REFERÊNCIA QUE FUNCIONA
+        
+        // H - Header Record
+        sb.Append($"H|`^&|||LABPLUS||||||||E1394-97|{timestamp}\r");
+
+        // P - Patient Record - EXATAMENTE como no log funcionando
+        sb.Append("P|1|||00004568||Mr.Test1 Surname||M||||||29^Y\r");
+
+        // O - Order Record - EXATAMENTE como no log funcionando
+        sb.Append($"O|2|112233^^^^N||^^^EUM`^^^CREA`^^^GLUC|R|{timestamp}||||||Plasma||||||||||O\r");
+
+        // L - Terminator Record
+        sb.Append("L|1|N\r");
 
         return sb.ToString();
     }
@@ -754,24 +718,11 @@ public class ConsoleWorker : BackgroundService
     {
         try
         {
-            var responseData = new byte[] { responseCode };
-            
-            _logger.LogInformation("📤 ENVIANDO RESPOSTA ASTM: {CodeName} ({Code:X2}) - {Description}", 
-                codeName, responseCode, description);
-            
-            _logger.LogInformation("📄 RESPOSTA HEX: {ResponseHex}", Convert.ToHexString(responseData));
-            _logger.LogInformation("👁️ RESPOSTA VISÍVEL: '<{CodeName}>'", codeName);
-            
-            // Enviar resposta REAL via TCP Server
-            await _tcpServer.SendToClientAsync(clientEndpoint, responseData, cancellationToken);
-            
-            _logger.LogInformation("✅ Resposta ASTM {CodeName} ENVIADA com sucesso para {ClientEndpoint}!", 
-                codeName, clientEndpoint);
+            await _tcpServer.SendToClientAsync(clientEndpoint, new byte[] { responseCode }, cancellationToken);
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "❌ Erro ao enviar resposta ASTM {CodeName} para {ClientEndpoint}", 
-                codeName, clientEndpoint);
+            _logger.LogError(ex, "[ERRO] Envio {CodeName}", codeName);
         }
     }
 
