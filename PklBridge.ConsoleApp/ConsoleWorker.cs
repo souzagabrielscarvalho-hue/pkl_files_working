@@ -17,7 +17,7 @@ public class ConsoleWorker : BackgroundService
     private readonly SerialBridge _serialBridge;
     private readonly IVidaApiClient _vidaClient;
     private readonly SerialPortMonitor _serialPortMonitor;
-    private readonly TcpServer _tcpServer;
+    private readonly IAstmTransport _transport;
     private readonly IMessageProcessor _messageProcessor;
     private readonly IExamOrderService _examOrderService;
     private readonly ExamRequestService _examRequestService;
@@ -35,7 +35,7 @@ public class ConsoleWorker : BackgroundService
         SerialBridge serialBridge,
         IVidaApiClient vidaClient,
         SerialPortMonitor serialPortMonitor,
-        TcpServer tcpServer,
+        IAstmTransport transport,
         IMessageProcessor messageProcessor,
         IExamOrderService examOrderService,
         ExamRequestService examRequestService,
@@ -49,7 +49,7 @@ public class ConsoleWorker : BackgroundService
         _serialBridge = serialBridge;
         _vidaClient = vidaClient;
         _serialPortMonitor = serialPortMonitor;
-        _tcpServer = tcpServer;
+        _transport = transport;
         _messageProcessor = messageProcessor;
         _examOrderService = examOrderService;
         _examRequestService = examRequestService;
@@ -68,18 +68,15 @@ public class ConsoleWorker : BackgroundService
         // Teste da API (mock)
         await TestVidaApiConnection(cancellationToken);
 
-        // Iniciar TCP Server se habilitado
-        if (_bridgeSettings.EnableTcpServer)
-        {
-            await StartTcpServer(cancellationToken);
-        }
+        // Iniciar o transporte ASTM (TCP ou Serial conforme TransportMode)
+        await StartTransport(cancellationToken);
 
-        // Iniciar monitoramento da COM2 apenas se o hardware bridge estiver DESABILITADO
-        if (!_bridgeSettings.EnableHardwareBridge)
+        // Monitorar COM2 em paralelo só faz sentido no modo TCP (alerta se HLAB ainda manda na serial)
+        if (_bridgeSettings.TransportMode == TransportMode.Tcp && !_bridgeSettings.EnableHardwareBridge)
         {
             StartSerialPortMonitoring();
         }
-        else
+        else if (_bridgeSettings.EnableHardwareBridge)
         {
             _logger.LogInformation("🔗 Hardware Bridge HABILITADO - PKL Bridge fará bridge entre COM2 e Named Pipe");
             Console.WriteLine("🔗 BRIDGE ATIVO: HLAB → COM2 → PKL Bridge → Named Pipe → API");
@@ -156,15 +153,23 @@ public class ConsoleWorker : BackgroundService
     private void LogConfigurationSummary()
     {
         _logger.LogInformation("=== Configuração PKL Bridge ===");
+        _logger.LogInformation("Transport Mode: {TransportMode}", _bridgeSettings.TransportMode);
+        if (_bridgeSettings.TransportMode == TransportMode.Tcp)
+        {
+            _logger.LogInformation("TCP Port: {Port}", _bridgeSettings.TcpPort);
+        }
+        else
+        {
+            _logger.LogInformation("COM Port: {ComPort}", _bridgeSettings.RealComPort ?? "Não configurado");
+            _logger.LogInformation("Config Serial: {BaudRate}, {DataBits}, {Parity}, {StopBits}",
+                _bridgeSettings.Serial.BaudRate,
+                _bridgeSettings.Serial.DataBits,
+                _bridgeSettings.Serial.Parity,
+                _bridgeSettings.Serial.StopBits);
+        }
         _logger.LogInformation("Named Pipe: {PipeName}", _bridgeSettings.PipeName);
-        _logger.LogInformation("COM Port Real: {ComPort}", _bridgeSettings.RealComPort ?? "Não configurado");
         _logger.LogInformation("Bridge Hardware: {Enabled}", _bridgeSettings.EnableHardwareBridge ? "Habilitado" : "Desabilitado");
         _logger.LogInformation("Log Todo Tráfego: {Enabled}", _bridgeSettings.LogAllTraffic ? "Habilitado" : "Desabilitado");
-        _logger.LogInformation("Config Serial: {BaudRate}, {DataBits}, {Parity}, {StopBits}", 
-            _bridgeSettings.Serial.BaudRate, 
-            _bridgeSettings.Serial.DataBits, 
-            _bridgeSettings.Serial.Parity, 
-            _bridgeSettings.Serial.StopBits);
         _logger.LogInformation("VIDA API: {BaseUrl}", _vidaSettings.BaseUrl);
         _logger.LogInformation("API Timeout: {TimeoutSeconds}s", _vidaSettings.TimeoutSeconds);
         _logger.LogInformation("Tentativas Retry: {MaxRetryAttempts}", _vidaSettings.MaxRetryAttempts);
@@ -290,34 +295,65 @@ public class ConsoleWorker : BackgroundService
         }
     }
 
-    private async Task StartTcpServer(CancellationToken cancellationToken)
+    private async Task StartTransport(CancellationToken cancellationToken)
     {
         try
         {
-            _logger.LogInformation("🌐 Iniciando TCP Server na porta {Port} para HLAB...", _bridgeSettings.TcpPort);
-            
-            // Subscrever ao evento de dados recebidos via TCP
-            _tcpServer.DataReceived += OnTcpDataReceived;
-            
-            await _tcpServer.StartAsync(cancellationToken);
-            
-            _logger.LogInformation("✅ TCP Server iniciado com sucesso!");
-            Console.WriteLine($"🌐 TCP SERVER ATIVO na porta {_bridgeSettings.TcpPort}");
-            Console.WriteLine($"   Configure HLAB: Servidor IP 0.0.0.0 Porta {_bridgeSettings.TcpPort}");
+            _logger.LogInformation("🚌 Iniciando transporte ASTM: {TransportName}", _transport.Name);
+
+            // Subscrever ao evento de dados recebidos
+            _transport.DataReceived += OnTransportDataReceived;
+
+            await _transport.StartAsync(cancellationToken);
+
+            _logger.LogInformation("✅ Transporte {TransportName} iniciado com sucesso!", _transport.Name);
+
+            if (_bridgeSettings.TransportMode == TransportMode.Tcp)
+            {
+                Console.WriteLine($"🌐 TCP SERVER ATIVO na porta {_bridgeSettings.TcpPort}");
+                Console.WriteLine($"   Configure HLAB: Servidor IP 0.0.0.0 Porta {_bridgeSettings.TcpPort}");
+            }
+            else
+            {
+                Console.WriteLine($"🔌 SERIAL ATIVO na porta {_bridgeSettings.RealComPort} ({_bridgeSettings.Serial.BaudRate} baud)");
+                Console.WriteLine($"   Configure HLAB: Saída para porta serial");
+            }
             Console.WriteLine();
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "❌ Erro ao iniciar TCP Server");
+            _logger.LogError(ex, "❌ Erro ao iniciar transporte {TransportName}", _transport.Name);
+            throw;
         }
     }
 
-    private async void OnTcpDataReceived(object? sender, TcpDataReceivedEventArgs e)
+    private async void OnTransportDataReceived(object? sender, AstmDataReceivedEventArgs e)
     {
         try
         {
-            // CRÍTICO: Verificar caracteres de controle ANTES de qualquer logging
-            // para não consumir o evento antes do AstmSessionManager processar
+            // ============================================
+            // LOG IMEDIATO - PRIMEIRA AÇÃO SEMPRE
+            // ============================================
+            _logger.LogInformation("📨 [{TransportName} RECEBIDO] Endpoint: {Endpoint} | Bytes: {ByteCount}",
+                _transport.Name, e.Endpoint, e.Data.Length);
+            
+            var hexData = Convert.ToHexString(e.Data);
+            _logger.LogInformation("📨 [HEX] {HexData}", hexData);
+            
+            var asciiData = System.Text.Encoding.ASCII.GetString(e.Data)
+                .Replace('\r', '↵')
+                .Replace('\n', '↓')
+                .Replace('\0', '∅')
+                .Replace("\x02", "<STX>")
+                .Replace("\x03", "<ETX>")
+                .Replace("\x04", "<EOT>")
+                .Replace("\x05", "<ENQ>")
+                .Replace("\x06", "<ACK>");
+            _logger.LogInformation("📨 [ASCII] {AsciiData}", asciiData);
+            
+            // ============================================
+            // PROCESSAMENTO: Verificar caracteres de controle
+            // ============================================
             if (e.Data.Length == 1)
             {
                 var controlChar = e.Data[0];
@@ -335,7 +371,7 @@ public class ConsoleWorker : BackgroundService
                     _logger.LogInformation("[HLAB→Bridge] EOT recebido | Finalizando sessão e enviando resultados para API VIDA");
                     
                     // Finalizar sessão e enviar resultados acumulados
-                    await _resultProcessor.FinalizeSessionAsync(e.ClientEndpoint, CancellationToken.None);
+                    await _resultProcessor.FinalizeSessionAsync(e.Endpoint, CancellationToken.None);
                     
                     _logger.LogInformation("[HLAB→Bridge] Sessão finalizada | Pendentes: {Count}", _pendingMessages.Count);
                     return;
@@ -352,11 +388,11 @@ public class ConsoleWorker : BackgroundService
                         var patientId = firstPending.Key;
                         var astmMessage = firstPending.Value;
                         
-                        await _tcpServer.SendToClientAsync(e.ClientEndpoint, new byte[] { 0x06 }, CancellationToken.None);
+                        await _transport.SendAsync(e.Endpoint, new byte[] { 0x06 }, CancellationToken.None);
                         await Task.Delay(500);
                         
                         var success = await _astmSessionManager.SendAstmMessageAsync(
-                            e.ClientEndpoint,
+                            e.Endpoint,
                             astmMessage,
                             isResponseToQuery: true,
                             CancellationToken.None);
@@ -373,7 +409,7 @@ public class ConsoleWorker : BackgroundService
                     }
                     else
                     {
-                        await _tcpServer.SendToClientAsync(e.ClientEndpoint, new byte[] { 0x06 }, CancellationToken.None);
+                        await _transport.SendAsync(e.Endpoint, new byte[] { 0x06 }, CancellationToken.None);
                     }
                     
                     return;
@@ -388,7 +424,7 @@ public class ConsoleWorker : BackgroundService
                 {
                     if (e.Data[i] == 0x03)
                     {
-                        await _tcpServer.SendToClientAsync(e.ClientEndpoint, new byte[] { 0x06 }, CancellationToken.None);
+                        await _transport.SendAsync(e.Endpoint, new byte[] { 0x06 }, CancellationToken.None);
                         break;
                     }
                 }
@@ -399,16 +435,16 @@ public class ConsoleWorker : BackgroundService
                 // Processar cada mensagem (incluindo resultados)
                 foreach (var message in messages)
                 {
-                    await _resultProcessor.ProcessMessageAsync(message, e.ClientEndpoint, CancellationToken.None);
+                    await _resultProcessor.ProcessMessageAsync(message, e.Endpoint, CancellationToken.None);
                 }
             }
 
             // Processar dados ASTM recebidos via TCP (Query, Results, etc)
-            await ProcessTcpDataAsync(e.Data, e.ClientEndpoint, CancellationToken.None);
+            await ProcessTcpDataAsync(e.Data, e.Endpoint, CancellationToken.None);
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "[ERRO] Processamento TCP | Cliente: {ClientEndpoint}", e.ClientEndpoint);
+            _logger.LogError(ex, "[ERRO] Processamento {TransportName} | Endpoint: {Endpoint}", _transport.Name, e.Endpoint);
         }
     }
 
@@ -718,7 +754,7 @@ public class ConsoleWorker : BackgroundService
     {
         try
         {
-            await _tcpServer.SendToClientAsync(clientEndpoint, new byte[] { responseCode }, cancellationToken);
+            await _transport.SendAsync(clientEndpoint, new byte[] { responseCode }, cancellationToken);
         }
         catch (Exception ex)
         {

@@ -89,7 +89,19 @@ public class Program
                 services.AddSingleton<PklNamedPipeServer>();
                 services.AddSingleton<SerialPortClient>();
                 services.AddSingleton<SerialBridge>();
-                services.AddSingleton<TcpServer>(); // TCP Server para HLAB
+                services.AddSingleton<TcpServer>();         // usado pelo TcpAstmTransport
+                services.AddSingleton<TcpAstmTransport>();
+                services.AddSingleton<SerialAstmTransport>();
+
+                // Selecionar o transporte ASTM conforme TransportMode em BridgeSettings
+                var bridgeSection = configuration.GetSection(BridgeSettings.SectionName).Get<BridgeSettings>() ?? new BridgeSettings();
+                services.AddSingleton<IAstmTransport>(sp => bridgeSection.TransportMode switch
+                {
+                    TransportMode.Serial => sp.GetRequiredService<SerialAstmTransport>(),
+                    TransportMode.Tcp    => sp.GetRequiredService<TcpAstmTransport>(),
+                    _ => throw new InvalidOperationException($"TransportMode inválido: {bridgeSection.TransportMode}")
+                });
+
                 services.AddSingleton<AstmSessionManager>(); // ASTM Session Manager
                 services.AddSingleton<AstmMessageBuilder>(); // ASTM Message Builder
                 services.AddSingleton<ExamRequestService>(); // Exam Request Service

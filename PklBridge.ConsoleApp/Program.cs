@@ -1,3 +1,4 @@
+using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
@@ -30,63 +31,26 @@ try
     Console.WriteLine("📡 Named Pipe ativo: \\\\.\\pipe\\pkl_serial");
     Console.WriteLine("🔌 Aguardando conexão do HLAB...");
     Console.WriteLine();
-    Console.WriteLine("Escolha uma opção:");
-    Console.WriteLine("1️⃣  Menu Interativo de Testes");
-    Console.WriteLine("2️⃣  Modo Monitor (aguardar conexões)");
-    Console.WriteLine("q️⃣  Sair");
+    Console.WriteLine("📊 Modo Monitor ativo");
+    Console.WriteLine("Pressione 'q' + ENTER para sair");
+    Console.WriteLine("Pressione qualquer outra tecla + ENTER para status");
     Console.WriteLine();
-    Console.Write("Opção: ");
 
-    var choice = Console.ReadLine()?.Trim();
-
-    if (choice == "1")
+    // Loop para manter console ativo
+    while (true)
     {
-        // Executar menu interativo
-        using var scope = host.Services.CreateScope();
-        var interactiveMenu = scope.ServiceProvider.GetRequiredService<InteractiveMenu>();
+        var input = Console.ReadLine();
         
-        var cts = new CancellationTokenSource();
-        Console.CancelKeyPress += (_, e) =>
+        if (input?.ToLower() == "q")
         {
-            e.Cancel = true;
-            cts.Cancel();
-        };
-
-        await interactiveMenu.RunAsync(cts.Token);
-    }
-    else if (choice == "2" || string.IsNullOrEmpty(choice))
-    {
-        // Modo monitor tradicional
-        Console.WriteLine();
-        Console.WriteLine("📊 Modo Monitor ativo");
-        Console.WriteLine("Pressione 'q' + ENTER para sair");
-        Console.WriteLine("Pressione qualquer outra tecla + ENTER para status");
-        Console.WriteLine();
-
-        // Loop para manter console ativo
-        while (true)
-        {
-            var input = Console.ReadLine();
-            
-            if (input?.ToLower() == "q")
-            {
-                Console.WriteLine("Encerrando PKL Bridge...");
-                break;
-            }
-            
-            // Mostrar status
-            Console.WriteLine($"⏰ Status: {DateTime.Now:HH:mm:ss} - PKL Bridge rodando");
-            Console.WriteLine($"💾 Memória: {GC.GetTotalMemory(false) / (1024 * 1024)}MB");
-            Console.WriteLine();
+            Console.WriteLine("Encerrando PKL Bridge...");
+            break;
         }
-    }
-    else if (choice?.ToLower() == "q")
-    {
-        Console.WriteLine("Encerrando PKL Bridge...");
-    }
-    else
-    {
-        Console.WriteLine("Opção inválida. Encerrando...");
+        
+        // Mostrar status
+        Console.WriteLine($"⏰ Status: {DateTime.Now:HH:mm:ss} - PKL Bridge rodando");
+        Console.WriteLine($"💾 Memória: {GC.GetTotalMemory(false) / (1024 * 1024)}MB");
+        Console.WriteLine();
     }
 }
 catch (Exception ex)
@@ -138,11 +102,8 @@ static IHostBuilder CreateHostBuilder(string[] args) =>
             services.AddScoped<IAstmParser, AstmMessageParser>();
             services.AddScoped<IMessageProcessor, MessageProcessor>();
             
-            // API VIDA REAL DE PRODUÇÃO
+            // API VIDA
             services.AddHttpClient<IVidaApiClient, VidaApiClient>();
-            
-            // Para TESTES com dados fictícios (descomente a linha abaixo e comente a linha acima):
-            // services.AddScoped<IVidaApiClient, MockVidaApiClient>();
             
             services.AddScoped<IAstmMessageBuilder, AstmMessageBuilder>();
             services.AddScoped<IExamOrderService, ExamOrderService>();
@@ -152,7 +113,19 @@ static IHostBuilder CreateHostBuilder(string[] args) =>
             services.AddSingleton<SerialPortClient>();
             services.AddSingleton<SerialBridge>();
             services.AddSingleton<SerialPortMonitor>(); // Monitor para COM2
-            services.AddSingleton<TcpServer>(); // TCP Server para HLAB
+            services.AddSingleton<TcpServer>();         // usado pelo TcpAstmTransport
+            services.AddSingleton<TcpAstmTransport>();
+            services.AddSingleton<SerialAstmTransport>();
+
+            // Selecionar o transporte ASTM conforme TransportMode em BridgeSettings
+            var bridgeSection = configuration.GetSection(BridgeSettings.SectionName).Get<BridgeSettings>() ?? new BridgeSettings();
+            services.AddSingleton<IAstmTransport>(sp => bridgeSection.TransportMode switch
+            {
+                TransportMode.Serial => sp.GetRequiredService<SerialAstmTransport>(),
+                TransportMode.Tcp    => sp.GetRequiredService<TcpAstmTransport>(),
+                _ => throw new InvalidOperationException($"TransportMode inválido: {bridgeSection.TransportMode}")
+            });
+
             services.AddSingleton<AstmSessionManager>(); // ASTM Session Manager
             services.AddSingleton<AstmMessageBuilder>(); // ASTM Message Builder (singleton para ExamRequestService)
             services.AddSingleton<ExamRequestService>(); // Exam Request Service

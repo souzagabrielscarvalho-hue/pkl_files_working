@@ -1,23 +1,47 @@
 # Visual Studio
 .vs/
 *.user
+*.userprefs
+*.userosscache
 *.suo
+*.sln.docstates
 
 # Build outputs
-bin/
-obj/
+[Bb]in/
+[Oo]bj/
 out/
+x64/
+x86/
+
+# Test results
+[Tt]est[Rr]esult*/
+*.coverage
+*.coveragexml
 
 # NuGet
 packages/
 *.nupkg
+*.snupkg
 
-# Logs (opcional - manter histórico pode ser útil)
-# logs/
-
-# Memory Bank (apenas local - não versionar)
-memorybank/
+# Logs
+logs/
+*.log
 
 # IDE
 .idea/
+.vscode/
 *.swp
+_ReSharper*/
+*.DotSettings.user
+
+# Chaves / Sensíveis
+*.pfx
+*.snk
+appsettings.*.Local.json
+appsettings.Development.json
+
+# Claude Code (configurações locais)
+.claude/
+
+# Documentação local (não versionar)
+docs/

@@ -31,9 +31,8 @@ public class VidaApiClient : IVidaApiClient
         
         _jsonOptions = new JsonSerializerOptions
         {
-            PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
             PropertyNameCaseInsensitive = true,
-            WriteIndented = false
+            WriteIndented = false,
         };
 
         ConfigureHttpClient();

@@ -17,11 +17,11 @@ public class Worker : BackgroundService
     private readonly VidaApiSettings _vidaSettings;
     private readonly SerialBridge _serialBridge;
     private readonly IVidaApiClient _vidaClient;
-    private readonly TcpServer _tcpServer;
+    private readonly IAstmTransport _transport;
     private readonly AstmSessionManager _astmSessionManager;
     private readonly ResultProcessor _resultProcessor;
     private readonly IAstmParser _astmParser;
-    
+
     // Armazenar mensagens pendentes para envio quando HLAB reconectar
     private readonly ConcurrentDictionary<string, string> _pendingMessages = new();
 
@@ -31,7 +31,7 @@ public class Worker : BackgroundService
         IOptions<VidaApiSettings> vidaSettings,
         SerialBridge serialBridge,
         IVidaApiClient vidaClient,
-        TcpServer tcpServer,
+        IAstmTransport transport,
         AstmSessionManager astmSessionManager,
         ResultProcessor resultProcessor,
         IAstmParser astmParser)
@@ -41,7 +41,7 @@ public class Worker : BackgroundService
         _vidaSettings = vidaSettings.Value;
         _serialBridge = serialBridge;
         _vidaClient = vidaClient;
-        _tcpServer = tcpServer;
+        _transport = transport;
         _astmSessionManager = astmSessionManager;
         _resultProcessor = resultProcessor;
         _astmParser = astmParser;
@@ -57,11 +57,8 @@ public class Worker : BackgroundService
         // Teste da API
         await TestVidaApiConnection(cancellationToken);
 
-        // Iniciar TCP Server se habilitado
-        if (_bridgeSettings.EnableTcpServer)
-        {
-            await StartTcpServer(cancellationToken);
-        }
+        // Iniciar transporte ASTM (TCP ou Serial conforme TransportMode)
+        await StartTransport(cancellationToken);
 
         await base.StartAsync(cancellationToken);
     }
@@ -69,17 +66,17 @@ public class Worker : BackgroundService
     public override async Task StopAsync(CancellationToken cancellationToken)
     {
         _logger.LogInformation("PKL Bridge Service parando...");
-        
+
         try
         {
             if (_serialBridge.IsRunning)
             {
                 await _serialBridge.StopAsync(cancellationToken);
             }
-            
-            if (_tcpServer.IsRunning)
+
+            if (_transport.IsRunning)
             {
-                await _tcpServer.StopAsync(cancellationToken);
+                await _transport.StopAsync(cancellationToken);
             }
         }
         catch (Exception ex)
@@ -88,7 +85,7 @@ public class Worker : BackgroundService
         }
 
         await base.StopAsync(cancellationToken);
-        
+
         _logger.LogInformation("PKL Bridge Service parou");
     }
 
@@ -137,11 +134,21 @@ public class Worker : BackgroundService
     private void LogConfigurationSummary()
     {
         _logger.LogInformation("=== Configuração PKL Bridge Service ===");
+        _logger.LogInformation("Transport Mode: {TransportMode}", _bridgeSettings.TransportMode);
+        if (_bridgeSettings.TransportMode == TransportMode.Tcp)
+        {
+            _logger.LogInformation("TCP Port: {Port}", _bridgeSettings.TcpPort);
+        }
+        else
+        {
+            _logger.LogInformation("COM Port: {ComPort}", _bridgeSettings.RealComPort ?? "Não configurado");
+            _logger.LogInformation("Serial: {BaudRate}, {DataBits}, {Parity}, {StopBits}",
+                _bridgeSettings.Serial.BaudRate,
+                _bridgeSettings.Serial.DataBits,
+                _bridgeSettings.Serial.Parity,
+                _bridgeSettings.Serial.StopBits);
+        }
         _logger.LogInformation("Named Pipe: {PipeName}", _bridgeSettings.PipeName);
-        _logger.LogInformation("COM Port Real: {ComPort}", _bridgeSettings.RealComPort ?? "Não configurado");
-        _logger.LogInformation("TCP Server: {Enabled} | Porta: {Port}", 
-            _bridgeSettings.EnableTcpServer ? "Habilitado" : "Desabilitado",
-            _bridgeSettings.TcpPort);
         _logger.LogInformation("VIDA API: {BaseUrl}", _vidaSettings.BaseUrl);
         _logger.LogInformation("Franchise ID: {FranchiseId}", _vidaSettings.FranchiseCredentialId);
         _logger.LogInformation("=======================================");
@@ -178,14 +185,15 @@ public class Worker : BackgroundService
             {
                 Timestamp = DateTime.Now,
                 SerialBridgeRunning = _serialBridge.IsRunning,
-                TcpServerRunning = _tcpServer.IsRunning,
+                TransportRunning = _transport.IsRunning,
                 MemoryUsage = GC.GetTotalMemory(false) / (1024 * 1024), // MB
                 UptimeMinutes = (DateTime.Now - Process.GetCurrentProcess().StartTime).TotalMinutes
             };
 
-            _logger.LogInformation("💚 Health Check - Bridge: {BridgeStatus} | TCP: {TcpStatus} | Memória: {MemoryMB}MB | Uptime: {UptimeMinutes:F1}min",
+            _logger.LogInformation("💚 Health Check - Bridge: {BridgeStatus} | {TransportName}: {TransportStatus} | Memória: {MemoryMB}MB | Uptime: {UptimeMinutes:F1}min",
                 healthData.SerialBridgeRunning ? "Rodando" : "Parado",
-                healthData.TcpServerRunning ? "Rodando" : "Parado",
+                _transport.Name,
+                healthData.TransportRunning ? "Rodando" : "Parado",
                 healthData.MemoryUsage,
                 healthData.UptimeMinutes);
 
@@ -193,7 +201,7 @@ public class Worker : BackgroundService
             if (!_serialBridge.IsRunning)
             {
                 _logger.LogWarning("⚠️ Serial bridge não está rodando, tentando reiniciar...");
-                
+
                 try
                 {
                     await _serialBridge.StartAsync(cancellationToken);
@@ -204,20 +212,20 @@ public class Worker : BackgroundService
                     _logger.LogError(ex, "❌ Falha ao reiniciar serial bridge");
                 }
             }
-            
-            // Reiniciar TCP server se não estiver rodando
-            if (_bridgeSettings.EnableTcpServer && !_tcpServer.IsRunning)
+
+            // Reiniciar transporte se não estiver rodando
+            if (!_transport.IsRunning)
             {
-                _logger.LogWarning("⚠️ TCP Server não está rodando, tentando reiniciar...");
-                
+                _logger.LogWarning("⚠️ Transporte {TransportName} não está rodando, tentando reiniciar...", _transport.Name);
+
                 try
                 {
-                    await _tcpServer.StartAsync(cancellationToken);
-                    _logger.LogInformation("✅ TCP Server reiniciado com sucesso");
+                    await _transport.StartAsync(cancellationToken);
+                    _logger.LogInformation("✅ Transporte {TransportName} reiniciado com sucesso", _transport.Name);
                 }
                 catch (Exception ex)
                 {
-                    _logger.LogError(ex, "❌ Falha ao reiniciar TCP Server");
+                    _logger.LogError(ex, "❌ Falha ao reiniciar transporte {TransportName}", _transport.Name);
                 }
             }
         }
@@ -245,30 +253,53 @@ public class Worker : BackgroundService
             e.Source, e.Message);
     }
 
-    private async Task StartTcpServer(CancellationToken cancellationToken)
+    private async Task StartTransport(CancellationToken cancellationToken)
     {
         try
         {
-            _logger.LogInformation("🌐 Iniciando TCP Server na porta {Port} para HLAB...", _bridgeSettings.TcpPort);
-            
-            // Subscrever ao evento de dados recebidos via TCP
-            _tcpServer.DataReceived += OnTcpDataReceived;
-            
-            await _tcpServer.StartAsync(cancellationToken);
-            
-            _logger.LogInformation("✅ TCP Server iniciado com sucesso na porta {Port}", _bridgeSettings.TcpPort);
+            _logger.LogInformation("🚌 Iniciando transporte ASTM: {TransportName}", _transport.Name);
+
+            // Subscrever ao evento de dados recebidos
+            _transport.DataReceived += OnTransportDataReceived;
+
+            await _transport.StartAsync(cancellationToken);
+
+            _logger.LogInformation("✅ Transporte {TransportName} iniciado com sucesso", _transport.Name);
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "❌ Erro ao iniciar TCP Server");
+            _logger.LogError(ex, "❌ Erro ao iniciar transporte {TransportName}", _transport.Name);
+            throw;
         }
     }
 
-    private async void OnTcpDataReceived(object? sender, TcpDataReceivedEventArgs e)
+    private async void OnTransportDataReceived(object? sender, AstmDataReceivedEventArgs e)
     {
         try
         {
-            // Verificar caracteres de controle
+            // ============================================
+            // LOG IMEDIATO - PRIMEIRA AÇÃO SEMPRE
+            // ============================================
+            _logger.LogInformation("📨 [{TransportName} RECEBIDO] Endpoint: {Endpoint} | Bytes: {ByteCount}",
+                _transport.Name, e.Endpoint, e.Data.Length);
+            
+            var hexData = Convert.ToHexString(e.Data);
+            _logger.LogInformation("📨 [HEX] {HexData}", hexData);
+            
+            var asciiData = System.Text.Encoding.ASCII.GetString(e.Data)
+                .Replace('\r', '↵')
+                .Replace('\n', '↓')
+                .Replace('\0', '∅')
+                .Replace("\x02", "<STX>")
+                .Replace("\x03", "<ETX>")
+                .Replace("\x04", "<EOT>")
+                .Replace("\x05", "<ENQ>")
+                .Replace("\x06", "<ACK>");
+            _logger.LogInformation("📨 [ASCII] {AsciiData}", asciiData);
+            
+            // ============================================
+            // PROCESSAMENTO: Verificar caracteres de controle
+            // ============================================
             if (e.Data.Length == 1)
             {
                 var controlChar = e.Data[0];
@@ -285,7 +316,7 @@ public class Worker : BackgroundService
                     _logger.LogInformation("[HLAB→Bridge] EOT recebido | Finalizando sessão e enviando resultados para API VIDA");
                     
                     // Finalizar sessão e enviar resultados acumulados
-                    await _resultProcessor.FinalizeSessionAsync(e.ClientEndpoint, CancellationToken.None);
+                    await _resultProcessor.FinalizeSessionAsync(e.Endpoint, CancellationToken.None);
                     
                     _logger.LogInformation("[HLAB→Bridge] Sessão finalizada | Pendentes: {Count}", _pendingMessages.Count);
                     return;
@@ -302,11 +333,11 @@ public class Worker : BackgroundService
                         var patientId = firstPending.Key;
                         var astmMessage = firstPending.Value;
                         
-                        await _tcpServer.SendToClientAsync(e.ClientEndpoint, new byte[] { 0x06 }, CancellationToken.None);
+                        await _transport.SendAsync(e.Endpoint, new byte[] { 0x06 }, CancellationToken.None);
                         await Task.Delay(500);
                         
                         var success = await _astmSessionManager.SendAstmMessageAsync(
-                            e.ClientEndpoint,
+                            e.Endpoint,
                             astmMessage,
                             isResponseToQuery: true,
                             CancellationToken.None);
@@ -323,7 +354,7 @@ public class Worker : BackgroundService
                     }
                     else
                     {
-                        await _tcpServer.SendToClientAsync(e.ClientEndpoint, new byte[] { 0x06 }, CancellationToken.None);
+                        await _transport.SendAsync(e.Endpoint, new byte[] { 0x06 }, CancellationToken.None);
                     }
                     
                     return;
@@ -338,7 +369,7 @@ public class Worker : BackgroundService
                 {
                     if (e.Data[i] == 0x03)
                     {
-                        await _tcpServer.SendToClientAsync(e.ClientEndpoint, new byte[] { 0x06 }, CancellationToken.None);
+                        await _transport.SendAsync(e.Endpoint, new byte[] { 0x06 }, CancellationToken.None);
                         break;
                     }
                 }
@@ -349,25 +380,25 @@ public class Worker : BackgroundService
                 // Processar cada mensagem (incluindo resultados)
                 foreach (var message in messages)
                 {
-                    await _resultProcessor.ProcessMessageAsync(message, e.ClientEndpoint, CancellationToken.None);
+                    await _resultProcessor.ProcessMessageAsync(message, e.Endpoint, CancellationToken.None);
                 }
                 
                 // Processar Query se houver
-                var asciiData = System.Text.Encoding.ASCII.GetString(e.Data);
-                if (asciiData.Contains("Q|"))
+                var queryData = System.Text.Encoding.ASCII.GetString(e.Data);
+                if (queryData.Contains("Q|"))
                 {
-                    var patientId = ExtractPatientIdFromQuery(asciiData);
+                    var patientId = ExtractPatientIdFromQuery(queryData);
                     if (!string.IsNullOrEmpty(patientId))
                     {
                         _logger.LogInformation("[HLAB→Bridge] Query recebida | Paciente: {PatientId}", patientId);
-                        await SendExamsForPatient(patientId, e.ClientEndpoint, CancellationToken.None);
+                        await SendExamsForPatient(patientId, e.Endpoint, CancellationToken.None);
                     }
                 }
             }
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "[ERRO] Processamento TCP | Cliente: {ClientEndpoint}", e.ClientEndpoint);
+            _logger.LogError(ex, "[ERRO] Processamento {TransportName} | Endpoint: {Endpoint}", _transport.Name, e.Endpoint);
         }
     }
 
@@ -418,7 +449,7 @@ public class Worker : BackgroundService
             if (!examResponse.Success || examResponse.Data == null || examResponse.Data.Data == null || !examResponse.Data.Data.Any())
             {
                 _logger.LogWarning("[API VIDA] Sem exames | Tag: {TagId}", patientId);
-                await _tcpServer.SendToClientAsync(clientEndpoint, new byte[] { 0x04 }, cancellationToken);
+                await _transport.SendAsync(clientEndpoint, new byte[] { 0x04 }, cancellationToken);
                 return;
             }
 
@@ -471,7 +502,7 @@ public class Worker : BackgroundService
             _logger.LogError(ex, "[ERRO] Envio exames | Paciente: {PatientId}", patientId);
             try
             {
-                await _tcpServer.SendToClientAsync(clientEndpoint, new byte[] { 0x04 }, cancellationToken);
+                await _transport.SendAsync(clientEndpoint, new byte[] { 0x04 }, cancellationToken);
             }
             catch { }
         }
@@ -506,7 +537,7 @@ public class Worker : BackgroundService
         try
         {
             _serialBridge?.Dispose();
-            _tcpServer?.Dispose();
+            (_transport as IDisposable)?.Dispose();
         }
         catch (Exception ex)
         {

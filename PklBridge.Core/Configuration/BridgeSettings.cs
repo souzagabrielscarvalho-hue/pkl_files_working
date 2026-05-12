@@ -1,9 +1,19 @@
+using System.Text.Json.Serialization;
+
 namespace PklBridge.Core.Configuration;
+
+[JsonConverter(typeof(JsonStringEnumConverter))]
+public enum TransportMode
+{
+    Tcp,
+    Serial
+}
 
 public class BridgeSettings
 {
     public const string SectionName = "BridgeSettings";
-    
+
+    public TransportMode TransportMode { get; set; } = TransportMode.Tcp;
     public string PipeName { get; set; } = "pkl_serial";
     public string? RealComPort { get; set; }
     public SerialSettings Serial { get; set; } = new();

@@ -239,10 +239,6 @@ STX + Frame + Record + ETX + Checksum + CR + LF
 3. Desenvolva com testes
 4. Submeta um Pull Request
 
-## 📄 Licença
-
-Copyright © 2024 - Interface PKL Hemograma
-Todos os direitos reservados.
 
 ## 📞 Suporte
 

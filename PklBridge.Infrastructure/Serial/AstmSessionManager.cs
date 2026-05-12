@@ -1,4 +1,5 @@
 using Microsoft.Extensions.Logging;
+using PklBridge.Core.Interfaces;
 using PklBridge.Core.Models;
 using System.Text;
 using System.Collections.Concurrent;
@@ -11,7 +12,7 @@ namespace PklBridge.Infrastructure.Serial;
 public class AstmSessionManager
 {
     private readonly ILogger<AstmSessionManager> _logger;
-    private readonly TcpServer _tcpServer;
+    private readonly IAstmTransport _transport;
     private readonly SemaphoreSlim _sessionLock = new(1, 1);
     
     // Caracteres de controle ASTM
@@ -31,13 +32,13 @@ public class AstmSessionManager
     // Fila de respostas por cliente para sincronização
     private readonly ConcurrentDictionary<string, TaskCompletionSource<byte>> _pendingResponses = new();
 
-    public AstmSessionManager(ILogger<AstmSessionManager> logger, TcpServer tcpServer)
+    public AstmSessionManager(ILogger<AstmSessionManager> logger, IAstmTransport transport)
     {
         _logger = logger;
-        _tcpServer = tcpServer;
-        
+        _transport = transport;
+
         // Subscrever ao evento de dados recebidos para capturar ACK/NAK
-        _tcpServer.DataReceived += OnTcpDataReceived;
+        _transport.DataReceived += OnTransportDataReceived;
     }
 
     /// <summary>
@@ -103,9 +104,9 @@ public class AstmSessionManager
     }
 
     /// <summary>
-    /// Processa dados recebidos via TCP para capturar caracteres de controle
+    /// Processa dados recebidos via transporte (TCP ou Serial) para capturar caracteres de controle
     /// </summary>
-    private void OnTcpDataReceived(object? sender, TcpDataReceivedEventArgs e)
+    private void OnTransportDataReceived(object? sender, AstmDataReceivedEventArgs e)
     {
         try
         {
@@ -113,16 +114,16 @@ public class AstmSessionManager
             if (e.Data.Length == 1)
             {
                 var controlChar = e.Data[0];
-                
+
                 if (controlChar == ACK || controlChar == NAK || controlChar == EOT)
                 {
-                    _logger.LogDebug("📨 Caractere de controle recebido de {ClientEndpoint}: {ControlChar:X2} ({Name})", 
-                        e.ClientEndpoint, 
+                    _logger.LogDebug("📨 Caractere de controle recebido de {Endpoint}: {ControlChar:X2} ({Name})",
+                        e.Endpoint,
                         controlChar,
                         controlChar == ACK ? "ACK" : controlChar == NAK ? "NAK" : "EOT");
-                    
+
                     // Notificar quem está aguardando resposta
-                    if (_pendingResponses.TryRemove(e.ClientEndpoint, out var tcs))
+                    if (_pendingResponses.TryRemove(e.Endpoint, out var tcs))
                     {
                         tcs.TrySetResult(controlChar);
                     }
@@ -187,7 +188,7 @@ public class AstmSessionManager
                 _logger.LogInformation("📤 Enviando ENQ para {ClientEndpoint} (tentativa {Attempt}/{MaxRetries})", 
                     clientEndpoint, attempt, MaxRetries);
                 
-                await _tcpServer.SendToClientAsync(clientEndpoint, new byte[] { ENQ }, cancellationToken);
+                await _transport.SendAsync(clientEndpoint, new byte[] { ENQ }, cancellationToken);
                 
                 // Aguardar ACK REAL do HLAB
                 var response = await WaitForControlCharAsync(clientEndpoint, EnqTimeoutMs, cancellationToken);
@@ -253,7 +254,7 @@ public class AstmSessionManager
                     _logger.LogDebug("📄 Frame {FrameNumber} TXT: {FrameText}", frameNumber, frameText);
                 }
                 
-                await _tcpServer.SendToClientAsync(clientEndpoint, frame, cancellationToken);
+                await _transport.SendAsync(clientEndpoint, frame, cancellationToken);
                 
                 // Aguardar ACK REAL do HLAB
                 var response = await WaitForControlCharAsync(clientEndpoint, AckTimeoutMs, cancellationToken);
@@ -304,7 +305,7 @@ public class AstmSessionManager
     private async Task SendEotAsync(string clientEndpoint, CancellationToken cancellationToken)
     {
         _logger.LogInformation("📤 Enviando EOT para {ClientEndpoint} - finalizando transmissão", clientEndpoint);
-        await _tcpServer.SendToClientAsync(clientEndpoint, new byte[] { EOT }, cancellationToken);
+        await _transport.SendAsync(clientEndpoint, new byte[] { EOT }, cancellationToken);
     }
 
     /// <summary>
@@ -436,7 +437,7 @@ public class AstmSessionManager
     public async Task SendAckAsync(string clientEndpoint, CancellationToken cancellationToken = default)
     {
         _logger.LogDebug("📤 Enviando ACK");
-        await _tcpServer.SendToClientAsync(clientEndpoint, new byte[] { ACK }, cancellationToken);
+        await _transport.SendAsync(clientEndpoint, new byte[] { ACK }, cancellationToken);
     }
 
     /// <summary>
@@ -445,7 +446,7 @@ public class AstmSessionManager
     public async Task SendNakAsync(string clientEndpoint, CancellationToken cancellationToken = default)
     {
         _logger.LogDebug("📤 Enviando NAK");
-        await _tcpServer.SendToClientAsync(clientEndpoint, new byte[] { NAK }, cancellationToken);
+        await _transport.SendAsync(clientEndpoint, new byte[] { NAK }, cancellationToken);
     }
 
     /// <summary>
