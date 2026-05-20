@@ -43,5 +43,6 @@ appsettings.Development.json
 # Claude Code (configurações locais)
 .claude/
 
-# Documentação local (não versionar)
-docs/
+# Documentação local (não versionar) — exceto guias referenciados pelo README
+docs/*
+!docs/INSTALAR-SERVICO-WINDOWS.md
