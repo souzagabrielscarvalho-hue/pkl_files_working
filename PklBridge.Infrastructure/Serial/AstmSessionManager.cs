@@ -141,7 +141,7 @@ public class AstmSessionManager
     /// </summary>
     private async Task<byte?> WaitForControlCharAsync(string clientEndpoint, int timeoutMs, CancellationToken cancellationToken)
     {
-        var tcs = new TaskCompletionSource<byte>();
+        var tcs = new TaskCompletionSource<byte>(TaskCreationOptions.RunContinuationsAsynchronously);
         _pendingResponses[clientEndpoint] = tcs;
         
         try
@@ -185,13 +185,16 @@ public class AstmSessionManager
         {
             try
             {
+                // Registrar o waiter ANTES de enviar o ENQ para não perder o ACK
+                var waitTask = WaitForControlCharAsync(clientEndpoint, EnqTimeoutMs, cancellationToken);
+
                 _logger.LogInformation("📤 Enviando ENQ para {ClientEndpoint} (tentativa {Attempt}/{MaxRetries})", 
                     clientEndpoint, attempt, MaxRetries);
                 
                 await _transport.SendAsync(clientEndpoint, new byte[] { ENQ }, cancellationToken);
                 
                 // Aguardar ACK REAL do HLAB
-                var response = await WaitForControlCharAsync(clientEndpoint, EnqTimeoutMs, cancellationToken);
+                var response = await waitTask;
                 
                 if (response == ACK)
                 {
@@ -254,10 +257,13 @@ public class AstmSessionManager
                     _logger.LogDebug("📄 Frame {FrameNumber} TXT: {FrameText}", frameNumber, frameText);
                 }
                 
+                // Registrar o waiter ANTES de enviar o frame para não perder o ACK
+                var waitTask = WaitForControlCharAsync(clientEndpoint, AckTimeoutMs, cancellationToken);
+
                 await _transport.SendAsync(clientEndpoint, frame, cancellationToken);
                 
                 // Aguardar ACK REAL do HLAB
-                var response = await WaitForControlCharAsync(clientEndpoint, AckTimeoutMs, cancellationToken);
+                var response = await waitTask;
                 
                 if (response == ACK)
                 {

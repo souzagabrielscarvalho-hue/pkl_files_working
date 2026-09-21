@@ -46,3 +46,5 @@ appsettings.Development.json
 # Documentação local (não versionar) — exceto guias referenciados pelo README
 docs/*
 !docs/INSTALAR-SERVICO-WINDOWS.md
+# Publish output
+publish/
